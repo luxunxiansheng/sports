@@ -18,12 +18,15 @@ PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from trackers import ByteTrackTracker
 from trackers import ReIDModel
-
+ROBOFLOW_API_KEY = "YOUR-API-KEY"
+PLAYER_DETECTION_MODEL_ID = "basketball-player-detection-2/7"
+COURT_DETECTION_MODEL_ID = "basketball-court-detection-2/8"
+REID_MODEL_NAME = "mobilenetv4_conv_small.e1200_r224_in1k"
 BALL_CLASS_ID = 0
-GOALKEEPER_CLASS_ID = 1
+NUMBER_CLASS_ID = 1
 PLAYER_CLASS_ID = 2
-REFEREE_CLASS_ID = 3
-keypoint_confidence_threshold = 0.6
+REFEREE_CLASS_ID = 9
+keypoint_confidence_threshold = 0.5
 
 STRIDE = 60
 CONFIG = BasketballCourtConfiguration()
@@ -115,6 +118,7 @@ def render_radar(
         config=CONFIG, xy=transformed_xy[color_lookup == i],
         face_color=sv.Color.from_hex(COLORS[i]), radius=4, pitch=radar)
     return radar
+
 def run_pitch_detection(source_video_path: str, device: str) -> Iterator[np.ndarray]:
     """
     Run pitch detection on a video and yield annotated frames.
@@ -126,11 +130,11 @@ def run_pitch_detection(source_video_path: str, device: str) -> Iterator[np.ndar
     Yields:
         Iterator[np.ndarray]: Iterator over annotated frames.
     """
-    pitch_detection_model = get_model(model_id="basketball-court-detection-2/2")
+    pitch_detection_model = get_model(model_id=COURT_DETECTION_MODEL_ID)
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
     for frame in frame_generator:
-        result = pitch_detection_model(frame, verbose=False)[0]
-        keypoints = sv.KeyPoints.from_ultralytics(result)
+        result = pitch_detection_model.infer(frame, verbose=False)[0]
+        keypoints = sv.KeyPoints.from_inference(result)
 
         annotated_frame = frame.copy()
         annotated_frame = VERTEX_LABEL_ANNOTATOR.annotate(
@@ -138,9 +142,9 @@ def run_pitch_detection(source_video_path: str, device: str) -> Iterator[np.ndar
         yield annotated_frame
 
 def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
-    player_detection_model = get_model(model_id="basketball-player-detection-2/7")
+    player_detection_model = get_model(model_id=PLAYER_DETECTION_MODEL_ID, api_key = ROBOFLOW_API_KEY)
 
-    pitch_detection_model = get_model(model_id="basketball-court-detection-2/2")
+    pitch_detection_model = get_model(model_id=COURT_DETECTION_MODEL_ID, api_key = ROBOFLOW_API_KEY)
     frame_generator = sv.get_video_frames_generator(
         source_path=source_video_path, stride=STRIDE)
     
@@ -153,17 +157,24 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
     team_classifier = TeamClassifier(device=device)
     team_classifier.fit(crops)
 
-    feature_model = ReIDModel.from_timm("mobilenetv4_conv_small.e1200_r224_in1k")
     frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
+
+    feature_model = ReIDModel.from_timm(REID_MODEL_NAME)
     tracker = ByteTrackTracker(
-    minimum_consecutive_frames=3,
-    reid_model=feature_model,
-    lost_track_buffer=100,
-    )
+        minimum_consecutive_frames=3,
+        reid_model=feature_model,
+        lost_track_buffer=100,
+        )
     for frame in frame_generator:
         result = pitch_detection_model.infer(frame, verbose=False)[0]
         keypoints = sv.KeyPoints.from_inference(result)
-        keypoints.xy[keypoints.confidence<keypoint_confidence_threshold] = keypoints.xy[keypoints.confidence<keypoint_confidence_threshold] * 0
+
+        mask = keypoints.confidence[0]<keypoint_confidence_threshold
+        keypoints.xy[0][mask] = keypoints.xy[0][mask] * 0
+
+        if len(mask)-np.count_nonzero(mask)<4: # If there arent 4 points for find homography
+            print("Frame skipped due to lack of keypoints")
+            continue
         result_players = player_detection_model.infer(frame, verbose=False)[0]
         detections = sv.Detections.from_inference(result_players)
         players = detections[detections.class_id == PLAYER_CLASS_ID]
@@ -172,11 +183,10 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
 
         crops = get_crops(frame, players)
         players_team_id = team_classifier.predict(crops)
-        #referees = detections[detections.class_id == REFEREE_CLASS_ID]
 
         color_lookup = players_team_id
         labels = [str(tracker_id) for tracker_id in detections.tracker_id]
-        players.class_id = players_team_id # For assigning the correct color in annotators
+        detections.class_id = players_team_id # For assigning the correct color in annotators
 
         annotated_frame = frame.copy()
         annotated_frame = ELLIPSE_ANNOTATOR.annotate(
@@ -198,8 +208,62 @@ def run_radar(source_video_path: str, device: str) -> Iterator[np.ndarray]:
         annotated_frame = sv.draw_image(annotated_frame, radar, opacity=0.8, rect=rect)
         yield annotated_frame
 
+def run_player_detection(source_video_path: str, device: str) -> Iterator[np.ndarray]:
+    """
+    Run player detection on a video and yield annotated frames.
 
-def main(source_video_path: str, target_video_path: str, device: str, mode: Mode, roboflow_api_key: str) -> None:
+    Args:
+        source_video_path (str): Path to the source video.
+        device (str): Device to run the model on (e.g., 'cpu', 'cuda').
+
+    Yields:
+        Iterator[np.ndarray]: Iterator over annotated frames.
+    """
+    player_detection_model = get_model(model_id=PLAYER_DETECTION_MODEL_ID)
+    frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
+    for frame in frame_generator:
+        result = player_detection_model.infer(frame, verbose=False)[0]
+        detections = sv.Detections.from_inference(result)
+
+        annotated_frame = frame.copy()
+        annotated_frame = BOX_ANNOTATOR.annotate(annotated_frame, detections)
+        annotated_frame = BOX_LABEL_ANNOTATOR.annotate(annotated_frame, detections)
+        yield annotated_frame
+
+def run_player_tracking(source_video_path: str, device: str) -> Iterator[np.ndarray]:
+    """
+    Run player tracking on a video and yield annotated frames with tracked players.
+
+    Args:
+        source_video_path (str): Path to the source video.
+        device (str): Device to run the model on (e.g., 'cpu', 'cuda').
+
+    Yields:
+        Iterator[np.ndarray]: Iterator over annotated frames.
+    """
+    player_detection_model = get_model(model_id=PLAYER_DETECTION_MODEL_ID)
+    frame_generator = sv.get_video_frames_generator(source_path=source_video_path)
+
+    feature_model = ReIDModel.from_timm(REID_MODEL_NAME)
+    tracker = ByteTrackTracker(
+        minimum_consecutive_frames=3,
+        reid_model=feature_model,
+        lost_track_buffer=40,
+        )    
+    for frame in frame_generator:
+        result = player_detection_model.infer(frame, verbose=False)[0]
+        detections = sv.Detections.from_inference(result)
+        detections = tracker.update(detections, frame)
+
+        labels = [str(tracker_id) for tracker_id in detections.tracker_id]
+
+        annotated_frame = frame.copy()
+        annotated_frame = ELLIPSE_ANNOTATOR.annotate(annotated_frame, detections)
+        annotated_frame = ELLIPSE_LABEL_ANNOTATOR.annotate(
+            annotated_frame, detections, labels=labels)
+        yield annotated_frame
+
+def main(source_video_path: str, target_video_path: str, device: str, mode: Mode) -> None:
     if mode == Mode.PITCH_DETECTION:
         frame_generator = run_pitch_detection(
             source_video_path=source_video_path, device=device)
