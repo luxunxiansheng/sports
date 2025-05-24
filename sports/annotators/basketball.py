@@ -50,8 +50,8 @@ def draw_three_point_arc(
 
 def draw_court(
     config: Any,
-    background_color: Any,
-    line_color: Any,
+    background_color: sv.Color = sv.Color(224, 190, 139),
+    line_color: sv.Color = sv.Color.WHITE,
     padding: int = 50,
     line_thickness: int = 4,
     scale: float = 0.2
