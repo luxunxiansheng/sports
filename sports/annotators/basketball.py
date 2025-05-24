@@ -37,13 +37,13 @@ def draw_3point_line_ellipse(img, pt1, pt2, color, config, padding, scale, side 
     )
 
 
-def draw_pitch(
+def draw_court(
     config: BasketballCourtConfiguration,
     background_color: sv.Color = sv.Color(224, 190, 139),
     line_color: sv.Color = sv.Color.WHITE,
     padding: int = 50,
-    line_thickness: int = 2,
-    scale: float = 0.1
+    line_thickness: int = 4,
+    scale: float = 0.2
 ) -> np.ndarray:
     """
     Draws a basketball court with specified dimensions, colors, and scale.
@@ -113,7 +113,7 @@ def draw_pitch(
         center=centre_circle_center,
         radius=scaled_circle_radius,
         color=line_color.as_bgr(),
-        thickness=1
+        thickness=line_thickness / 2
     )
     # Arc
     cv2.ellipse(
@@ -124,7 +124,7 @@ def draw_pitch(
     startAngle=180,
     endAngle=360,
     color=line_color.as_bgr(),
-    thickness=2
+    thickness=line_thickness
     )
     #Basket
     centre_circle_center = (
@@ -138,7 +138,7 @@ def draw_pitch(
         center=centre_circle_center,
         radius=scaled_circle_radius,
         color=line_color.as_bgr(),
-        thickness=1
+        thickness=line_thickness
     )
 
     # Draw restricted area arcs
