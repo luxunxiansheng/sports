@@ -1,4 +1,4 @@
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 
 import cv2
 import supervision as sv
@@ -209,7 +209,7 @@ def draw_points_on_pitch(
         np.ndarray: Image of the soccer pitch with points drawn on it.
     """
     if pitch is None:
-        pitch = draw_pitch(
+        pitch = draw_court(
             config=config,
             padding=padding,
             scale=scale
@@ -270,7 +270,7 @@ def draw_paths_on_pitch(
         np.ndarray: Image of the soccer pitch with paths drawn on it.
     """
     if pitch is None:
-        pitch = draw_pitch(
+        pitch = draw_court(
             config=config,
             padding=padding,
             scale=scale
@@ -339,7 +339,7 @@ def draw_pitch_voronoi_diagram(
         np.ndarray: Image of the soccer pitch with the Voronoi diagram overlay.
     """
     if pitch is None:
-        pitch = draw_pitch(
+        pitch = draw_court(
             config=config,
             padding=padding,
             scale=scale
