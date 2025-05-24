@@ -113,7 +113,7 @@ def draw_court(
         center=centre_circle_center,
         radius=scaled_circle_radius,
         color=line_color.as_bgr(),
-        thickness=line_thickness / 2
+        thickness=max(1, line_thickness // 2)
     )
     # Arc
     cv2.ellipse(
