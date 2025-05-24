@@ -6,34 +6,45 @@ import numpy as np
 
 from sports.configs.basketball import BasketballCourtConfiguration
 
-def draw_3point_line_ellipse(img, pt1, pt2, color, config, padding, scale, side = "left"):
-    # Compute midpoint and angle
-    center = (int((pt1[0] + pt2[0])/ 2*scale+ padding) , int((pt1[1] + pt2[1]) / 2*scale+ padding))
-    dx = pt2[0] - pt1[0]
-    dy = pt2[1] - pt1[1]
+def draw_three_point_arc(
+    image: np.ndarray,
+    point1: Tuple[float, float],
+    point2: Tuple[float, float],
+    color: Tuple[int, int, int],
+    config: Any,
+    padding: int,
+    scale: float,
+    side: str = "left",
+    thickness: int = 2,
+) -> None:
+    center_x = int(((point1[0] + point2[0]) / 2) * scale + padding)
+    center_y = int(((point1[1] + point2[1]) / 2) * scale + padding)
+    center = (center_x, center_y)
 
+    dx = point2[0] - point1[0]
+    dy = point2[1] - point1[1]
     angle = np.degrees(np.arctan2(dy, dx))
 
-    radius_height = int((config.three_point_line_distance-config.end_to_rim_beginning) * scale)
-    radius_width = int((config.width/2 - config.side_to_3_point_line) * scale)
-
-    # Axes: equal for circle arc
+    radius_height = int((config.three_point_line_distance - config.end_to_rim_beginning) * scale)
+    radius_width = int((config.width / 2 - config.side_to_3_point_line) * scale)
     axes = (radius_width, radius_height)
-    if side =="left":
-        startAngle=180
-        endAngle=360
+
+    if side == "left":
+        start_angle, end_angle = 180, 360
     elif side == "right":
-        startAngle=0
-        endAngle=180
+        start_angle, end_angle = 0, 180
+    else:
+        raise ValueError("side must be either 'left' or 'right'")
+
     cv2.ellipse(
-        img,
+        image,
         center=center,
         axes=axes,
         angle=angle,
-        startAngle=startAngle,
-        endAngle=endAngle,
+        startAngle=start_angle,
+        endAngle=end_angle,
         color=color,
-        thickness=2
+        thickness=thickness,
     )
 
 
@@ -150,14 +161,11 @@ def draw_court(
     startAngle=0,
     endAngle=180,
     color=line_color.as_bgr(),
-    thickness=2
+    thickness=line_thickness
     )
 
-
-
-    three_pooint_line_color = (255, 255, 255)  # White
-    draw_3point_line_ellipse(pitch_image, config.vertices[10-2-1], config.vertices[11-2-1], three_pooint_line_color, config, padding, scale,"left")
-    draw_3point_line_ellipse(pitch_image, config.vertices[31-6-1], config.vertices[32-6-1], three_pooint_line_color, config, padding, scale,"right")
+    draw_three_point_arc(pitch_image, config.vertices[10-2-1], config.vertices[11-2-1], line_color.as_bgr(), config, padding, scale,"left", thickness=line_thickness)
+    draw_three_point_arc(pitch_image, config.vertices[31-6-1], config.vertices[32-6-1], line_color.as_bgr(), config, padding, scale,"right", thickness=line_thickness)
 
 
     return pitch_image
