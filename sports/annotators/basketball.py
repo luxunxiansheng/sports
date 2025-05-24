@@ -25,8 +25,8 @@ def draw_three_point_arc(
     dy = point2[1] - point1[1]
     angle = np.degrees(np.arctan2(dy, dx))
 
-    radius_height = int((config.three_point_line_distance - config.end_to_rim_beginning) * scale)
-    radius_width = int((config.width / 2 - config.side_to_3_point_line) * scale)
+    radius_height = int((config.three_point_arc_radius_cm - config.baseline_to_rim_start_cm) * scale)
+    radius_width = int((config.court_width_cm / 2 - config.sideline_to_three_point_line_cm) * scale)
     axes = (radius_width, radius_height)
 
     if side == "left":
@@ -49,32 +49,19 @@ def draw_three_point_arc(
 
 
 def draw_court(
-    config: BasketballCourtConfiguration,
-    background_color: sv.Color = sv.Color(224, 190, 139),
-    line_color: sv.Color = sv.Color.WHITE,
+    config: Any,
+    background_color: Any,
+    line_color: Any,
     padding: int = 50,
     line_thickness: int = 4,
     scale: float = 0.2
 ) -> np.ndarray:
     """
     Draws a basketball court with specified dimensions, colors, and scale.
-
-    Args:
-        config (BasketballCourtConfiguration): Court configuration.
-        background_color (sv.Color): Color of the court background.
-        line_color (sv.Color): Color of the court lines.
-        padding (int): Padding around the court image.
-        line_thickness (int): Thickness of the court lines.
-        point_radius (int): Radius of key points like center circle.
-        scale (float): Scale factor to shrink/enlarge the court.
-
-    Returns:
-        np.ndarray: Image of the basketball court.
     """
-    scaled_width = int(config.width * scale)
-    scaled_length = int(config.length * scale)
-    scaled_circle_radius = int(config.center_circle_radius * scale)
-    #scaled_penalty_spot_distance = int(config.penalty_spot_distance * scale)
+    scaled_width = int(config.court_width_cm * scale)
+    scaled_length = int(config.court_length_cm * scale)
+    scaled_circle_radius = int(config.center_circle_radius_cm * scale)
 
     pitch_image = np.ones(
         (scaled_width + 2 * padding,
@@ -82,6 +69,7 @@ def draw_court(
         dtype=np.uint8
     ) * np.array(background_color.as_bgr(), dtype=np.uint8)
 
+    # Draw court lines
     for start, end in config.edges:
         point1 = (int(config.vertices[start - 1][0] * scale) + padding,
                   int(config.vertices[start - 1][1] * scale) + padding)
@@ -95,6 +83,7 @@ def draw_court(
             thickness=line_thickness
         )
 
+    # Draw center circle
     centre_circle_center = (
         scaled_length // 2 + padding,
         scaled_width // 2 + padding
@@ -107,66 +96,71 @@ def draw_court(
         thickness=line_thickness
     )
 
+    # Draw baskets and arcs (left and right)
+    for side in ["left", "right"]:
+        if side == "left":
+            basket_x = int(config.baseline_to_rim_start_cm * scale + padding)
+        else:
+            basket_x = int((config.court_length_cm - config.baseline_to_rim_start_cm) * scale + padding)
+        basket_y = int(config.court_width_cm * scale // 2 + padding)
+        basket_center = (basket_x, basket_y)
 
-    # Draw baskets and arcs
-    centre_circle_center = (
-        int(config.end_to_rim_beginning *scale + padding),
-        int(config.width*scale  // 2+ padding),
+        scaled_rim_radius = int(config.rim_diameter_cm / 2 * scale)
+        scaled_restricted_arc_radius = int(config.restricted_area_radius_cm * scale)
 
-    )
-    scaled_circle_radius = int(config.rim_diameter/2 * scale)
-    scaled_arc_radius = int(config.restricted_area_radius * scale)
+        # Basket (rim)
+        cv2.circle(
+            img=pitch_image,
+            center=basket_center,
+            radius=scaled_rim_radius,
+            color=line_color.as_bgr(),
+            thickness=max(1, line_thickness // 2)
+        )
+        # Restricted area arc
+        if side == "left":
+            start_angle, end_angle = 180, 360
+        else:
+            start_angle, end_angle = 0, 180
 
+        cv2.ellipse(
+            img=pitch_image,
+            center=basket_center,
+            angle=90,
+            axes=(scaled_restricted_arc_radius, scaled_restricted_arc_radius),
+            startAngle=start_angle,
+            endAngle=end_angle,
+            color=line_color.as_bgr(),
+            thickness=line_thickness
+        )
 
-    # Basket
-    cv2.circle(
-        img=pitch_image,
-        center=centre_circle_center,
-        radius=scaled_circle_radius,
-        color=line_color.as_bgr(),
-        thickness=max(1, line_thickness // 2)
-    )
-    # Arc
-    cv2.ellipse(
-    img = pitch_image,
-    center=centre_circle_center,
-    angle = 90,
-    axes=(scaled_arc_radius,scaled_arc_radius),
-    startAngle=180,
-    endAngle=360,
-    color=line_color.as_bgr(),
-    thickness=line_thickness
-    )
-    #Basket
-    centre_circle_center = (
-        int((config.length-config.end_to_rim_beginning) *scale + padding),
-        int(config.width*scale  // 2+ padding),
+    # Draw three-point arcs
+    # These vertex indices might need to be rechecked if you change the layout
+    left_arc_points = (config.vertices[7], config.vertices[8])   # Indices for left arc ends
+    right_arc_points = (config.vertices[24], config.vertices[25])  # Indices for right arc ends
 
-    )
-
-    cv2.circle(
-        img=pitch_image,
-        center=centre_circle_center,
-        radius=scaled_circle_radius,
-        color=line_color.as_bgr(),
+    draw_three_point_arc(
+        pitch_image,
+        left_arc_points[0],
+        left_arc_points[1],
+        line_color.as_bgr(),
+        config,
+        padding,
+        scale,
+        side="left",
         thickness=line_thickness
     )
 
-    # Draw restricted area arcs
-    cv2.ellipse(
-    pitch_image,
-    center=centre_circle_center,
-    angle = 90,
-    axes=(scaled_arc_radius,scaled_arc_radius),
-    startAngle=0,
-    endAngle=180,
-    color=line_color.as_bgr(),
-    thickness=line_thickness
+    draw_three_point_arc(
+        pitch_image,
+        right_arc_points[0],
+        right_arc_points[1],
+        line_color.as_bgr(),
+        config,
+        padding,
+        scale,
+        side="right",
+        thickness=line_thickness
     )
-
-    draw_three_point_arc(pitch_image, config.vertices[10-2-1], config.vertices[11-2-1], line_color.as_bgr(), config, padding, scale,"left", thickness=line_thickness)
-    draw_three_point_arc(pitch_image, config.vertices[31-6-1], config.vertices[32-6-1], line_color.as_bgr(), config, padding, scale,"right", thickness=line_thickness)
-
 
     return pitch_image
 
