@@ -206,7 +206,7 @@ def draw_points_on_pitch(
     radius: int = 10,
     thickness: int = 2,
     padding: int = 50,
-    scale: float = 0.1,
+    scale: float = 0.2,
     pitch: Optional[np.ndarray] = None
 ) -> np.ndarray:
     """

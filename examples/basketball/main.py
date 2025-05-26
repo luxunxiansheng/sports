@@ -8,7 +8,7 @@ import numpy as np
 import supervision as sv
 from tqdm import tqdm
 
-from sports.annotators.basketball import draw_pitch, draw_points_on_pitch
+from sports.annotators.basketball import draw_court, draw_points_on_pitch
 #from sports.common.ball import BallTracker, BallAnnotator
 from sports.common.team import TeamClassifier
 from sports.common.view import ViewTransformer
@@ -111,12 +111,12 @@ def render_radar(
     )
     xy = detections.get_anchors_coordinates(anchor=sv.Position.BOTTOM_CENTER)
     transformed_xy = transformer.transform_points(points=xy)
-
-    radar = draw_pitch(config=CONFIG)
+    scale = 0.2
+    radar = draw_court(config=CONFIG, scale = scale)
     for i in range(2):
         radar = draw_points_on_pitch(
         config=CONFIG, xy=transformed_xy[color_lookup == i],
-        face_color=sv.Color.from_hex(COLORS[i]), radius=4, pitch=radar)
+        face_color=sv.Color.from_hex(COLORS[i]), radius=4, pitch=radar, scale = scale)
     return radar
 
 def run_pitch_detection(source_video_path: str, device: str) -> Iterator[np.ndarray]:
@@ -263,7 +263,7 @@ def run_player_tracking(source_video_path: str, device: str) -> Iterator[np.ndar
             annotated_frame, detections, labels=labels)
         yield annotated_frame
 
-def main(source_video_path: str, target_video_path: str, device: str, mode: Mode) -> None:
+def main(source_video_path: str, target_video_path: str, device: str, mode: Mode    ) -> None:
     if mode == Mode.PITCH_DETECTION:
         frame_generator = run_pitch_detection(
             source_video_path=source_video_path, device=device)
