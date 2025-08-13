@@ -53,7 +53,7 @@ PRESETS_CENTIMETERS: Dict[League, Dict[str, int]] = {
 
 
 @dataclass
-class BasketballCourtConfiguration:
+class CourtConfiguration:
     """Configure basketball court dimensions for NBA or FIBA leagues.
     Provides court measurements in centimeters or feet with proper unit
     conversion and vertex/edge data for court visualization.
@@ -66,7 +66,8 @@ class BasketballCourtConfiguration:
 
     Examples:
         ```
-        from sports import BasketballCourtConfiguration, League, MeasurementUnit
+        from sports import MeasurementUnit
+        from sports.basketball import CourtConfiguration, League
 
         # Create NBA court configuration in centimeters
         nba_config = BasketballCourtConfiguration(

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import supervision as sv
 from typing import Tuple, Optional
-from sports.configs.basketball import BasketballCourtConfiguration
+from sports.basketball.config import CourtConfiguration
 from sports.common.core import MeasurementUnit
 
 
@@ -127,7 +127,7 @@ def _draw_dashed_ellipse(
 
 
 def draw_court(
-    config: BasketballCourtConfiguration,
+    config: CourtConfiguration,
     scale: float = 20,
     padding: int = 50,
     line_thickness: int = 4,
@@ -348,7 +348,7 @@ def draw_court(
 
 
 def draw_made_and_miss_on_court(
-    config: BasketballCourtConfiguration,
+    config: CourtConfiguration,
     made_xy: np.ndarray,
     miss_xy: np.ndarray,
     made_thickness: Optional[int] = None,
