@@ -1,408 +1,410 @@
-from typing import Optional, List, Tuple, Any
-
 import cv2
-import supervision as sv
 import numpy as np
-
+import supervision as sv
+from typing import Tuple, Optional
 from sports.configs.basketball import BasketballCourtConfiguration
+from sports.common.core import MeasurementUnit
 
-def apply_scale_and_padding(point: Tuple[float, float], scale: float, padding: int) -> Tuple[int, int]:
+
+BACKBOARD_TO_RIM_CM = 63.5
+BACKBOARD_SPAN_CM = 183.0
+
+
+def _to_pixel(
+    point: Tuple[float, float],
+    scale: float,
+    padding: int,
+) -> Tuple[int, int]:
+    """Scale court point to pixel space and apply padding."""
     return (
-        int(point[0] * scale + padding),
-        int(point[1] * scale + padding)
+        int(round(point[0] * scale + padding)),
+        int(round(point[1] * scale + padding)),
     )
 
 
-def draw_arc_from_points(
+def _draw_circular_arc_from_three_points(
     image: np.ndarray,
-    point_a: Tuple[float, float],
-    point_b: Tuple[float, float],
-    point_c: Tuple[float, float],
-    color: Tuple[int, int, int],
-    thickness: int = 2,
+    first_point: Tuple[float, float],
+    middle_point: Tuple[float, float],
+    last_point: Tuple[float, float],
+    bgr_color: Tuple[int, int, int],
+    thickness: int,
 ) -> None:
-    def compute_circle_center_and_radius(
-        point1: Tuple[float, float],
-        point2: Tuple[float, float],
-        point3: Tuple[float, float]
-    ) -> Tuple[Tuple[float, float], float]:
-        temp_sum_squares = point2[0] ** 2 + point2[1] ** 2
-        first_term = (point1[0] ** 2 + point1[1] ** 2 - temp_sum_squares) / 2.0
-        second_term = (temp_sum_squares - point3[0] ** 2 - point3[1] ** 2) / 2.0
-        determinant = (
-            (point1[0] - point2[0]) * (point2[1] - point3[1]) -
-            (point2[0] - point3[0]) * (point1[1] - point2[1])
+    """Draw an arc defined by three points."""
+    def circle_from_three_points(
+        p1: Tuple[float, float],
+        p2: Tuple[float, float],
+        p3: Tuple[float, float],
+    ):
+        sum_sq_p2 = p2[0] ** 2 + p2[1] ** 2
+        term1 = (p1[0] ** 2 + p1[1] ** 2 - sum_sq_p2) / 2.0
+        term2 = (sum_sq_p2 - p3[0] ** 2 - p3[1] ** 2) / 2.0
+        det = (
+            (p1[0] - p2[0]) * (p2[1] - p3[1])
+            - (p2[0] - p3[0]) * (p1[1] - p2[1])
         )
-
-        if abs(determinant) < 1e-10:
-            raise ValueError("Points are collinear")
-
-        center_x = (
-            first_term * (point2[1] - point3[1]) -
-            second_term * (point1[1] - point2[1])
-        ) / determinant
-
+        if abs(det) < 1e-10:
+            return (p2, 0.0)
+        center_x = (term1 * (p2[1] - p3[1]) - term2 * (p1[1] - p2[1])) / det
         center_y = (
-            (point1[0] - point2[0]) * second_term -
-            (point2[0] - point3[0]) * first_term
-        ) / determinant
-
-        radius = np.sqrt((center_x - point1[0]) ** 2 + (center_y - point1[1]) ** 2)
-
+            (p1[0] - p2[0]) * term2 - (p2[0] - p3[0]) * term1
+        ) / det
+        radius = float(np.hypot(center_x - p1[0], center_y - p1[1]))
         return (center_x, center_y), radius
 
-    circle_center, radius = compute_circle_center_and_radius(point_a, point_b, point_c)
-    circle_center_int = (int(circle_center[0]), int(circle_center[1]))
-    radius_int = int(radius)
+    def angle_deg(center_xy, point_xy) -> float:
+        return float(
+            np.degrees(
+                np.arctan2(point_xy[1] - center_xy[1], point_xy[0] - center_xy[0])
+            )
+        )
 
-    def compute_angle_in_degrees(
-        center: Tuple[float, float], point: Tuple[float, float]
-    ) -> float:
-        return np.degrees(np.arctan2(point[1] - center[1], point[0] - center[0]))
+    center, radius = circle_from_three_points(
+        first_point, middle_point, last_point
+    )
+    center_px = (int(round(center[0])), int(round(center[1])))
+    radius_px = int(round(radius))
 
-    angle_start = compute_angle_in_degrees(circle_center, point_a)
-    angle_end = compute_angle_in_degrees(circle_center, point_c)
-
-    if angle_end < angle_start:
-        angle_end += 360
+    start_angle = angle_deg(center, first_point)
+    end_angle = angle_deg(center, last_point)
+    if end_angle < start_angle:
+        end_angle += 360.0
 
     cv2.ellipse(
         image,
-        center=circle_center_int,
-        axes=(radius_int, radius_int),
+        center=center_px,
+        axes=(radius_px, radius_px),
         angle=0,
-        startAngle=angle_start,
-        endAngle=angle_end,
-        color=color,
+        startAngle=int(round(start_angle)),
+        endAngle=int(round(end_angle)),
+        color=bgr_color,
         thickness=thickness,
     )
 
 
+def _ellipse_point(
+    center: Tuple[int, int],
+    axes: Tuple[int, int],
+    rotation_degrees: float,
+    theta_degrees: float,
+) -> Tuple[int, int]:
+    cx, cy = center
+    a, b = axes
+    phi = np.deg2rad(rotation_degrees)
+    t = np.deg2rad(theta_degrees)
+    x = cx + a * np.cos(t) * np.cos(phi) - b * np.sin(t) * np.sin(phi)
+    y = cy + a * np.cos(t) * np.sin(phi) + b * np.sin(t) * np.cos(phi)
+    return int(round(x)), int(round(y))
+
+
+def _draw_dashed_ellipse(
+    image: np.ndarray,
+    center: Tuple[int, int],
+    axes: Tuple[int, int],
+    rotation_degrees: float,
+    start_degrees: float,
+    end_degrees: float,
+    bgr_color: Tuple[int, int, int],
+    thickness: int,
+    dash_length_degrees: float = 12.0,
+    gap_length_degrees: float = 8.0,
+    detail_degrees: float = 2.0,
+) -> None:
+    """Draw a dashed elliptical arc."""
+    angle = start_degrees
+    while angle < end_degrees:
+        dash_start = angle
+        dash_end = min(angle + dash_length_degrees, end_degrees)
+        t = dash_start
+        prev_point = _ellipse_point(center, axes, rotation_degrees, t)
+        t += detail_degrees
+        while t <= dash_end:
+            cur_point = _ellipse_point(center, axes, rotation_degrees, t)
+            cv2.line(image, prev_point, cur_point, bgr_color, thickness)
+            prev_point = cur_point
+            t += detail_degrees
+        angle = dash_end + gap_length_degrees
+
+
 def draw_court(
     config: BasketballCourtConfiguration,
-    background_color: sv.Color = sv.Color(224, 190, 139),
-    line_color: sv.Color = sv.Color.WHITE,
+    scale: float = 20,
     padding: int = 50,
     line_thickness: int = 4,
-    scale: float = 0.2
+    line_color: sv.Color = sv.Color.WHITE,
+    background_color: sv.Color = sv.Color(224, 190, 139),
+    paint_color: Optional[sv.Color] = None,
 ) -> np.ndarray:
-    scaled_width = int(config.court_width_cm * scale)
-    scaled_length = int(config.court_length_cm * scale)
-    scaled_circle_radius = int(config.center_circle_radius_cm * scale)
+    """Render a basketball court to an image."""
+    court_height_px = int(round(config.court_width * scale))
+    court_length_px = int(round(config.court_length * scale))
+    center_circle_radius_px = int(round(config.center_circle_radius * scale))
 
-    court_image = np.ones(
-        (scaled_width + 2 * padding,
-         scaled_length + 2 * padding, 3),
-        dtype=np.uint8
-    ) * np.array(background_color.as_bgr(), dtype=np.uint8)
+    image = np.zeros(
+        (court_height_px + 2 * padding, court_length_px + 2 * padding, 3),
+        dtype=np.uint8,
+    )
+    image[:, :] = background_color.as_bgr()
 
-    # draw court lines
-    for start, end in config.edges:
-        point1 = apply_scale_and_padding(config.vertices[start], scale, padding)
-        point2 = apply_scale_and_padding(config.vertices[end], scale, padding)
-        cv2.line(
-            img=court_image,
-            pt1=point1,
-            pt2=point2,
-            color=line_color.as_bgr(),
-            thickness=line_thickness
+    # Paint fill beneath lines
+    if paint_color is not None:
+        left_poly = np.array(
+            [_to_pixel(config.vertices[i], scale, padding)
+             for i in config.left_paint_indexes],
+            dtype=np.int32,
         )
+        right_poly = np.array(
+            [_to_pixel(config.vertices[i], scale, padding)
+             for i in config.right_paint_indexes],
+            dtype=np.int32,
+        )
+        cv2.fillPoly(image, [left_poly], color=paint_color.as_bgr())
+        cv2.fillPoly(image, [right_poly], color=paint_color.as_bgr())
 
-    throw_in_lines = [
-        (config.vertices[12], (config.vertices[12][0], config.vertices[12][1] + config.baseline_to_throw_line_length_cm)),
-        (config.vertices[14], (config.vertices[14][0], config.vertices[14][1] - config.baseline_to_throw_line_length_cm)),
-        (config.vertices[18], (config.vertices[18][0], config.vertices[18][1] + config.baseline_to_throw_line_length_cm)),
-        (config.vertices[20], (config.vertices[20][0], config.vertices[20][1] - config.baseline_to_throw_line_length_cm)),
+    # Court edges
+    for start_idx, end_idx in config.edges:
+        start_px = _to_pixel(config.vertices[start_idx], scale, padding)
+        end_px = _to_pixel(config.vertices[end_idx], scale, padding)
+        cv2.line(image, start_px, end_px, line_color.as_bgr(), line_thickness)
+
+    # Straight three-point segments
+    for start_idx, end_idx in [(1, 7), (4, 8), (28, 24), (31, 25)]:
+        start_px = _to_pixel(config.vertices[start_idx], scale, padding)
+        end_px = _to_pixel(config.vertices[end_idx], scale, padding)
+        cv2.line(image, start_px, end_px, line_color.as_bgr(), line_thickness)
+
+    # Right-side border joins
+    for start_idx, end_idx in [(18, 27), (20, 32)]:
+        start_px = _to_pixel(config.vertices[start_idx], scale, padding)
+        end_px = _to_pixel(config.vertices[end_idx], scale, padding)
+        cv2.line(image, start_px, end_px, line_color.as_bgr(), line_thickness)
+
+    # Stitch right sideline segment
+    right_top_px = _to_pixel(config.vertices[28], scale, padding)
+    right_bottom_px = _to_pixel(config.vertices[31], scale, padding)
+    cv2.line(image, right_top_px, right_bottom_px,
+             line_color.as_bgr(), line_thickness)
+
+    # Throw-in short lines
+    throw_in_specs = [
+        (config.vertices[12],
+         (config.vertices[12][0],
+          config.vertices[12][1] + config.baseline_to_throw_line_length)),
+        (config.vertices[14],
+         (config.vertices[14][0],
+          config.vertices[14][1] - config.baseline_to_throw_line_length)),
+        (config.vertices[18],
+         (config.vertices[18][0],
+          config.vertices[18][1] + config.baseline_to_throw_line_length)),
+        (config.vertices[20],
+         (config.vertices[20][0],
+          config.vertices[20][1] - config.baseline_to_throw_line_length)),
     ]
+    for start_pt, end_pt in throw_in_specs:
+        start_px = _to_pixel(start_pt, scale, padding)
+        end_px = _to_pixel(end_pt, scale, padding)
+        cv2.line(image, start_px, end_px, line_color.as_bgr(), line_thickness)
 
-    for start, end in throw_in_lines:
-        point1 = apply_scale_and_padding(start, scale, padding)
-        point2 = apply_scale_and_padding(end, scale, padding)
-        cv2.line(
-            img=court_image,
-            pt1=point1,
-            pt2=point2,
-            color=line_color.as_bgr(),
-            thickness=line_thickness
-        )
-
-    # draw center circle
-    scaled_circle_center = apply_scale_and_padding(config.vertices[16], scale, padding)
+    # Center circle
+    center_px = _to_pixel(config.vertices[16], scale, padding)
     cv2.circle(
-        img=court_image,
-        center=scaled_circle_center,
-        radius=scaled_circle_radius,
-        color=line_color.as_bgr(),
-        thickness=line_thickness
+        image,
+        center_px,
+        center_circle_radius_px,
+        line_color.as_bgr(),
+        line_thickness,
     )
 
-    # draw baskets and restricted arcs
+    # Baseline x in pixel space
+    left_baseline_x = _to_pixel((0.0, 0.0), scale, padding)[0]
+    right_baseline_x = _to_pixel((config.court_length, 0.0), scale, padding)[0]
+
+    # Backboard real-world constants
+    if config.measurement_unit == MeasurementUnit.FEET:
+        backboard_to_rim = BACKBOARD_TO_RIM_CM / 30.48
+        backboard_span = BACKBOARD_SPAN_CM / 30.48
+    else:
+        backboard_to_rim = BACKBOARD_TO_RIM_CM
+        backboard_span = BACKBOARD_SPAN_CM
+
+    # Hoops, restricted areas, free-throw circles, ticks, backboards
     for side in ["left", "right"]:
-        basket_center = config.vertices[6] if side == "left" else config.vertices[26]
-        scaled_basket_center = apply_scale_and_padding(basket_center, scale, padding)
-        scaled_rim_radius = int(config.rim_diameter_cm / 2 * scale)
-        scaled_restricted_arc_radius = int(config.restricted_area_radius_cm * scale)
+        basket_idx = (
+            config.left_basket_index if side == "left"
+            else config.right_basket_index
+        )
+        basket_x, basket_y = config.vertices[basket_idx]
+        basket_px = _to_pixel((basket_x, basket_y), scale, padding)
 
-        cv2.circle(
-            img=court_image,
-            center=scaled_basket_center,
-            radius=scaled_rim_radius,
-            color=line_color.as_bgr(),
-            thickness=max(1, line_thickness // 2)
+        rim_radius_px = int(round((config.rim_diameter / 2.0) * scale))
+        restricted_radius_px = int(
+            round(config.restricted_area_radius * scale)
         )
 
-        start_angle, end_angle = (180, 360) if side == "left" else (0, 180)
+        # Rim
+        cv2.circle(
+            image, basket_px, rim_radius_px,
+            line_color.as_bgr(), line_thickness
+        )
 
+        # Restricted area semicircle
+        start_ang, end_ang = ((180, 360) if side == "left" else (0, 180))
         cv2.ellipse(
-            img=court_image,
-            center=scaled_basket_center,
+            image,
+            center=basket_px,
             angle=90,
-            axes=(scaled_restricted_arc_radius, scaled_restricted_arc_radius),
-            startAngle=start_angle,
-            endAngle=end_angle,
+            axes=(restricted_radius_px, restricted_radius_px),
+            startAngle=start_ang,
+            endAngle=end_ang,
             color=line_color.as_bgr(),
-            thickness=line_thickness
+            thickness=line_thickness,
         )
 
-        free_throw_center = config.vertices[10] if side == "left" else config.vertices[22]
-        scaled_free_throw_center = apply_scale_and_padding(free_throw_center, scale, padding)
+        # Free-throw circle center
+        free_idx = 10 if side == "left" else 22
+        free_x, free_y = config.vertices[free_idx]
+        free_px = _to_pixel((free_x, free_y), scale, padding)
 
+        # Free-throw semicircle, solid inside paint
         cv2.ellipse(
-            img=court_image,
-            center=scaled_free_throw_center,
+            image,
+            center=free_px,
             angle=90,
-            axes=(scaled_circle_radius, scaled_circle_radius),
-            startAngle=start_angle,
-            endAngle=end_angle,
+            axes=(center_circle_radius_px, center_circle_radius_px),
+            startAngle=start_ang,
+            endAngle=end_ang,
             color=line_color.as_bgr(),
-            thickness=line_thickness
+            thickness=line_thickness,
         )
 
-        points = [7, 13, 8] if side == "left" else [25, 19, 24]
+        # Free-throw semicircle, dashed outside paint
+        dashed_start, dashed_end = (
+            (0, 180) if side == "left" else (180, 360)
+        )
+        _draw_dashed_ellipse(
+            image=image,
+            center=free_px,
+            axes=(center_circle_radius_px, center_circle_radius_px),
+            rotation_degrees=90,
+            start_degrees=dashed_start,
+            end_degrees=dashed_end,
+            bgr_color=line_color.as_bgr(),
+            thickness=line_thickness,
+            dash_length_degrees=12.0,
+            gap_length_degrees=8.0,
+            detail_degrees=2.0,
+        )
 
-        scaled_a, scaled_b, scaled_c = [
-            apply_scale_and_padding(config.vertices[i], scale, padding)
-            for i in points
+        # Three-point arc from three points
+        arc_indices = [7, 13, 8] if side == "left" else [25, 19, 24]
+        a_px, b_px, c_px = [
+            _to_pixel(config.vertices[i], scale, padding) for i in arc_indices
         ]
-
-        draw_arc_from_points(
-            court_image,
-            scaled_a,
-            scaled_b,
-            scaled_c,
-            line_color.as_bgr(),
-            line_thickness
+        _draw_circular_arc_from_three_points(
+            image, a_px, b_px, c_px, line_color.as_bgr(), line_thickness
         )
 
-    return court_image
-
-
-
-def draw_points_on_pitch(
-    config: BasketballCourtConfiguration,
-    xy: np.ndarray,
-    face_color: sv.Color = sv.Color.RED,
-    edge_color: sv.Color = sv.Color.BLACK,
-    radius: int = 10,
-    thickness: int = 2,
-    padding: int = 50,
-    scale: float = 0.2,
-    pitch: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """
-    Draws points on a soccer pitch.
-
-    Args:
-        config (BasketballCourtConfiguration): Configuration object containing the
-            dimensions and layout of the pitch.
-        xy (np.ndarray): Array of points to be drawn, with each point represented by
-            its (x, y) coordinates.
-        face_color (sv.Color, optional): Color of the point faces.
-            Defaults to sv.Color.RED.
-        edge_color (sv.Color, optional): Color of the point edges.
-            Defaults to sv.Color.BLACK.
-        radius (int, optional): Radius of the points in pixels.
-            Defaults to 10.
-        thickness (int, optional): Thickness of the point edges in pixels.
-            Defaults to 2.
-        padding (int, optional): Padding around the pitch in pixels.
-            Defaults to 50.
-        scale (float, optional): Scaling factor for the pitch dimensions.
-            Defaults to 0.1.
-        pitch (Optional[np.ndarray], optional): Existing pitch image to draw points on.
-            If None, a new pitch will be created. Defaults to None.
-
-    Returns:
-        np.ndarray: Image of the soccer pitch with points drawn on it.
-    """
-    if pitch is None:
-        pitch = draw_court(
-            config=config,
-            padding=padding,
-            scale=scale
-        )
-
-    for point in xy:
-        scaled_point = (
-            int(point[0] * scale) + padding,
-            int(point[1] * scale) + padding
-        )
-        cv2.circle(
-            img=pitch,
-            center=scaled_point,
-            radius=radius,
-            color=face_color.as_bgr(),
-            thickness=-1
-        )
-        cv2.circle(
-            img=pitch,
-            center=scaled_point,
-            radius=radius,
-            color=edge_color.as_bgr(),
-            thickness=thickness
-        )
-
-    return pitch
-
-
-def draw_paths_on_pitch(
-    config: BasketballCourtConfiguration,
-    paths: List[np.ndarray],
-    color: sv.Color = sv.Color.WHITE,
-    thickness: int = 2,
-    padding: int = 50,
-    scale: float = 0.1,
-    pitch: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """
-    Draws paths on a soccer pitch.
-
-    Args:
-        config (BasketballCourtConfiguration): Configuration object containing the
-            dimensions and layout of the pitch.
-        paths (List[np.ndarray]): List of paths, where each path is an array of (x, y)
-            coordinates.
-        color (sv.Color, optional): Color of the paths.
-            Defaults to sv.Color.WHITE.
-        thickness (int, optional): Thickness of the paths in pixels.
-            Defaults to 2.
-        padding (int, optional): Padding around the pitch in pixels.
-            Defaults to 50.
-        scale (float, optional): Scaling factor for the pitch dimensions.
-            Defaults to 0.1.
-        pitch (Optional[np.ndarray], optional): Existing pitch image to draw paths on.
-            If None, a new pitch will be created. Defaults to None.
-
-    Returns:
-        np.ndarray: Image of the soccer pitch with paths drawn on it.
-    """
-    if pitch is None:
-        pitch = draw_court(
-            config=config,
-            padding=padding,
-            scale=scale
-        )
-
-    for path in paths:
-        scaled_path = [
-            (
-                int(point[0] * scale) + padding,
-                int(point[1] * scale) + padding
-            )
-            for point in path if point.size > 0
-        ]
-
-        if len(scaled_path) < 2:
-            continue
-
-        for i in range(len(scaled_path) - 1):
+        # Tick lines from free-throw circle intersections to baselines
+        x_free = free_px[0]
+        y_top = free_px[1] - center_circle_radius_px
+        y_bottom = free_px[1] + center_circle_radius_px
+        if side == "left":
             cv2.line(
-                img=pitch,
-                pt1=scaled_path[i],
-                pt2=scaled_path[i + 1],
-                color=color.as_bgr(),
-                thickness=thickness
+                image, (left_baseline_x, y_top), (x_free, y_top),
+                line_color.as_bgr(), line_thickness
+            )
+            cv2.line(
+                image, (left_baseline_x, y_bottom), (x_free, y_bottom),
+                line_color.as_bgr(), line_thickness
+            )
+        else:
+            cv2.line(
+                image, (x_free, y_top), (right_baseline_x, y_top),
+                line_color.as_bgr(), line_thickness
+            )
+            cv2.line(
+                image, (x_free, y_bottom), (right_baseline_x, y_bottom),
+                line_color.as_bgr(), line_thickness
             )
 
-        return pitch
-
-
-def draw_pitch_voronoi_diagram(
-    config: BasketballCourtConfiguration,
-    team_1_xy: np.ndarray,
-    team_2_xy: np.ndarray,
-    team_1_color: sv.Color = sv.Color.RED,
-    team_2_color: sv.Color = sv.Color.WHITE,
-    opacity: float = 0.5,
-    padding: int = 50,
-    scale: float = 0.1,
-    pitch: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """
-    Draws a Voronoi diagram on a soccer pitch representing the control areas of two
-    teams.
-
-    Args:
-        config (BasketballCourtConfiguration): Configuration object containing the
-            dimensions and layout of the pitch.
-        team_1_xy (np.ndarray): Array of (x, y) coordinates representing the positions
-            of players in team 1.
-        team_2_xy (np.ndarray): Array of (x, y) coordinates representing the positions
-            of players in team 2.
-        team_1_color (sv.Color, optional): Color representing the control area of
-            team 1. Defaults to sv.Color.RED.
-        team_2_color (sv.Color, optional): Color representing the control area of
-            team 2. Defaults to sv.Color.WHITE.
-        opacity (float, optional): Opacity of the Voronoi diagram overlay.
-            Defaults to 0.5.
-        padding (int, optional): Padding around the pitch in pixels.
-            Defaults to 50.
-        scale (float, optional): Scaling factor for the pitch dimensions.
-            Defaults to 0.1.
-        pitch (Optional[np.ndarray], optional): Existing pitch image to draw the
-            Voronoi diagram on. If None, a new pitch will be created. Defaults to None.
-
-    Returns:
-        np.ndarray: Image of the soccer pitch with the Voronoi diagram overlay.
-    """
-    if pitch is None:
-        pitch = draw_court(
-            config=config,
-            padding=padding,
-            scale=scale
+        # Backboard, 2x thickness, touching the rim
+        backboard_x = (
+            basket_x - backboard_to_rim if side == "left"
+            else basket_x + backboard_to_rim
+        )
+        half_span = backboard_span / 2.0
+        backboard_top_px = _to_pixel(
+            (backboard_x, basket_y - half_span), scale, padding
+        )
+        backboard_bottom_px = _to_pixel(
+            (backboard_x, basket_y + half_span), scale, padding
+        )
+        cv2.line(
+            image, backboard_top_px, backboard_bottom_px,
+            line_color.as_bgr(), max(2, 2 * line_thickness)
         )
 
-    scaled_width = int(config.width * scale)
-    scaled_length = int(config.length * scale)
+    return image
 
-    voronoi = np.zeros_like(pitch, dtype=np.uint8)
 
-    team_1_color_bgr = np.array(team_1_color.as_bgr(), dtype=np.uint8)
-    team_2_color_bgr = np.array(team_2_color.as_bgr(), dtype=np.uint8)
+def draw_made_and_miss_on_court(
+    config: BasketballCourtConfiguration,
+    made_xy: np.ndarray,
+    miss_xy: np.ndarray,
+    made_thickness: Optional[int] = None,
+    miss_thickness: Optional[int] = None,
+    made_color: sv.Color = sv.Color.from_hex("#007A33"),
+    miss_color: sv.Color = sv.Color.from_hex("#850101"),
+    made_size: int = 20,
+    miss_size: int = 20,
+    scale: float = 20,
+    padding: int = 50,
+    line_thickness: int = 6,
+    court: Optional[np.ndarray] = None,
 
-    y_coordinates, x_coordinates = np.indices((
-        scaled_width + 2 * padding,
-        scaled_length + 2 * padding
-    ))
+) -> np.ndarray:
+    """Draw made shots as circle outlines and missed shots as crosses."""
+    if court is None:
+        court = draw_court(
+            config=config,
+            scale=scale,
+            padding=padding,
+            line_thickness=line_thickness,
+        )
 
-    y_coordinates -= padding
-    x_coordinates -= padding
+    made_stroke = made_thickness if made_thickness is not None else line_thickness
+    missed_stroke = (
+        miss_thickness if miss_thickness is not None else line_thickness
+    )
 
-    def calculate_distances(xy, x_coordinates, y_coordinates):
-        return np.sqrt((xy[:, 0][:, None, None] * scale - x_coordinates) ** 2 +
-                       (xy[:, 1][:, None, None] * scale - y_coordinates) ** 2)
+    def point_to_pixel(pt: Tuple[float, float]) -> Tuple[int, int]:
+        return _to_pixel(pt, scale=scale, padding=padding)
 
-    distances_team_1 = calculate_distances(team_1_xy, x_coordinates, y_coordinates)
-    distances_team_2 = calculate_distances(team_2_xy, x_coordinates, y_coordinates)
+    # Made shots: circle border
+    if made_xy is not None and len(made_xy) > 0:
+        for pt in made_xy:
+            cx, cy = point_to_pixel(tuple(pt))
+            cv2.circle(
+                img=court,
+                center=(cx, cy),
+                radius=made_size,
+                color=made_color.as_bgr(),
+                thickness=made_stroke,
+            )
 
-    min_distances_team_1 = np.min(distances_team_1, axis=0)
-    min_distances_team_2 = np.min(distances_team_2, axis=0)
+    # Missed shots: cross
+    if miss_xy is not None and len(miss_xy) > 0:
+        for pt in miss_xy:
+            cx, cy = point_to_pixel(tuple(pt))
+            x0, y0 = cx - miss_size, cy - miss_size
+            x1, y1 = cx + miss_size, cy + miss_size
+            cv2.line(
+                court, (x0, y0), (x1, y1),
+                miss_color.as_bgr(), missed_stroke
+            )
+            cv2.line(
+                court, (x0, y1), (x1, y0),
+                miss_color.as_bgr(), missed_stroke
+            )
 
-    control_mask = min_distances_team_1 < min_distances_team_2
-
-    voronoi[control_mask] = team_1_color_bgr
-    voronoi[~control_mask] = team_2_color_bgr
-
-    overlay = cv2.addWeighted(voronoi, opacity, pitch, 1 - opacity, 0)
-
-    return overlay
+    return court
