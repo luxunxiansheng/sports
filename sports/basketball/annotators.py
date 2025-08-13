@@ -349,8 +349,8 @@ def draw_court(
 
 def draw_made_and_miss_on_court(
     config: CourtConfiguration,
-    made_xy: np.ndarray,
-    miss_xy: np.ndarray,
+    made_xy: Optional[np.ndarray] = None,
+    miss_xy: Optional[np.ndarray] = None,
     made_thickness: Optional[int] = None,
     miss_thickness: Optional[int] = None,
     made_color: sv.Color = sv.Color.from_hex("#007A33"),
@@ -361,7 +361,6 @@ def draw_made_and_miss_on_court(
     padding: int = 50,
     line_thickness: int = 6,
     court: Optional[np.ndarray] = None,
-
 ) -> np.ndarray:
     """Draw made shots as circle outlines and missed shots as crosses."""
     if court is None:
@@ -372,39 +371,41 @@ def draw_made_and_miss_on_court(
             line_thickness=line_thickness,
         )
 
-    made_stroke = made_thickness if made_thickness is not None else line_thickness
+    made_stroke = (
+        made_thickness if made_thickness is not None else line_thickness
+    )
     missed_stroke = (
         miss_thickness if miss_thickness is not None else line_thickness
     )
 
-    def point_to_pixel(pt: Tuple[float, float]) -> Tuple[int, int]:
-        return _to_pixel(pt, scale=scale, padding=padding)
+    def point_to_pixel(point: Tuple[float, float]) -> Tuple[int, int]:
+        return _to_pixel(point, scale=scale, padding=padding)
+
+    # Normalize inputs to iterable collections
+    made_iter = (
+        np.atleast_2d(made_xy) if made_xy is not None and made_xy.size > 0 else ()
+    )
+    miss_iter = (
+        np.atleast_2d(miss_xy) if miss_xy is not None and miss_xy.size > 0 else ()
+    )
 
     # Made shots: circle border
-    if made_xy is not None and len(made_xy) > 0:
-        for pt in made_xy:
-            cx, cy = point_to_pixel(tuple(pt))
-            cv2.circle(
-                img=court,
-                center=(cx, cy),
-                radius=made_size,
-                color=made_color.as_bgr(),
-                thickness=made_stroke,
-            )
+    for point in made_iter:
+        center_x, center_y = point_to_pixel(tuple(point))
+        cv2.circle(
+            img=court,
+            center=(center_x, center_y),
+            radius=made_size,
+            color=made_color.as_bgr(),
+            thickness=made_stroke,
+        )
 
     # Missed shots: cross
-    if miss_xy is not None and len(miss_xy) > 0:
-        for pt in miss_xy:
-            cx, cy = point_to_pixel(tuple(pt))
-            x0, y0 = cx - miss_size, cy - miss_size
-            x1, y1 = cx + miss_size, cy + miss_size
-            cv2.line(
-                court, (x0, y0), (x1, y1),
-                miss_color.as_bgr(), missed_stroke
-            )
-            cv2.line(
-                court, (x0, y1), (x1, y0),
-                miss_color.as_bgr(), missed_stroke
-            )
+    for point in miss_iter:
+        center_x, center_y = point_to_pixel(tuple(point))
+        x0, y0 = center_x - miss_size, center_y - miss_size
+        x1, y1 = center_x + miss_size, center_y + miss_size
+        cv2.line(court, (x0, y0), (x1, y1), miss_color.as_bgr(), missed_stroke)
+        cv2.line(court, (x0, y1), (x1, y0), miss_color.as_bgr(), missed_stroke)
 
     return court
