@@ -11,8 +11,7 @@
 	"containerEnv": {
 	   "http_proxy": "${localEnv:http_proxy}",
        "https_proxy": "${localEnv:https_proxy}",
-       "no_proxy": "${localEnv:no_proxy}",
-
+       "no_proxy": "${localEnv:no_proxy}"
 	},
     "customizations": {
         "vscode": {
@@ -24,11 +23,13 @@
                 "ms-vscode.vscode-json",
                 "ms-vscode.vscode-html",
                 "ms-vscode.vscode-css",
-                "ms-vscode.vscode-javascript"
+                "ms-vscode.vscode-javascript",
+                "RSIP-Vision.nvidia-smi-plus",
+                "mhutchie.git-graph"
             ]
         }
     },
-    "postCreateCommand": "pip install -e . && pip install jupyter && git config --global user.name \"OrNot\" && git config --global user.email \"ornot2008@yahoo.com\"",
+    "postCreateCommand": "git config --global http.postBuffer 524288000 && git config --global http.lowSpeedLimit 0 && git config --global http.lowSpeedTime 999999 && pip install -e . && git config --global user.name \"OrNot\" && git config --global user.email \"ornot2008@yahoo.com\" && git clone --depth 1 https://github.com/roboflow/notebooks && git clone --depth 1 https://github.com/roboflow/inference && git clone --depth 1 https://github.com/autodistill/autodistill && git clone --depth 1 https://github.com/roboflow/multimodal-maestro",
     "forwardPorts": [8000],
     "portsAttributes": {
         "8000": {
