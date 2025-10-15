@@ -29,6 +29,10 @@
             ]
         }
     },
+    "mounts": [
+        "source=${localEnv:HOME}/data,target=/workspaces/${localWorkspaceFolderBasename}/data,type=bind,consistency=cached"
+		
+    ],
     "postCreateCommand": "bash -c \"git config --global http.postBuffer 524288000 && git config --global http.lowSpeedLimit 0 && git config --global http.lowSpeedTime 999999 && git config --global http.sslVerify false && pip install -e . && git config --global user.name \\\"OrNot\\\" && git config --global user.email \\\"ornot2008@yahoo.com\\\" && (if [ -d notebooks ]; then cd notebooks && git pull --depth 1; else git clone --depth 1 https://github.com/roboflow/notebooks; fi) && (if [ -d inference ]; then cd inference && git pull --depth 1; else git clone --depth 1 https://github.com/roboflow/inference; fi) && (if [ -d autodistill ]; then cd autodistill && git pull --depth 1; else git clone --depth 1 https://github.com/autodistill/autodistill; fi) && (if [ -d multimodal-maestro ]; then cd multimodal-maestro && git pull --depth 1; else git clone --depth 1 https://github.com/roboflow/multimodal-maestro; fi)\"",
     "forwardPorts": [8000],
     "portsAttributes": {
